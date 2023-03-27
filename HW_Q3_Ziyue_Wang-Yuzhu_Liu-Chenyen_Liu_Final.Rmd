@@ -1,0 +1,436 @@
+---
+title: "HW3_Q3"
+author: "Ziyue_Wang"
+date: "3/25/2023"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Problem 1
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(rsample) 
+library(randomForest)
+library(lubridate)
+library(modelr)
+library(gbm)
+library(caret)
+library(ggmap)
+library(maps)
+library(mapdata)
+greenbuildings = read.csv('../data/greenbuildings.csv', header=TRUE)
+CAhousing = read.csv('../data/CAhousing.csv', header=TRUE)
+dengue = read.csv('../data/dengue.csv', header=TRUE)
+# override the default setting of ggplot
+theme_set(theme_minimal())
+```
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+1. There's a causality problem, it's hard to come to a clear conclusion just by looking at police force size. Cities with higher than average crime rate might hire more police than an average city, this might lead to a false conclusion that police are ineffective at solving crime. On the other hand, having more police means that crime gets more easily detected, this might lead someone to conclude crime rates are higher when in fact that might be the same as any other city with a smaller police force. Simply put, it's hard to conclude what effect increased policing has on crime. 
+
+2. Basically, the researchers added an IV variable by using the terror alert system. High Terror alert means that there will be an increased police presence regardless of the amount of crime that's happening in a given area. In their first regression they found that a high terror alert is predicted to lower the number of crime by about 7 crimes. In the second regression, controlling for metro ridership, the high terror alert is predicted to lower the crime rate by about 6 crimes.
+
+3. The researchers decided to control for metro ridership to make sure that the lower crime rate caused by the high terror rate wasn't simply a matter of a smaller amount of people being out and about on the street. The researchers were trying to capture the effect that a high terror rate could have on the amount of people in the city. 
+
+4. The first column comprises of a linear model using robust regression with three coefficients. One of the coefficients looks at the effect of a high terror rate solely within the first police district area, meaning the national mall. This is because if terrorists were to attack Washington, D.C. they would probably focus on this area. The next coefficient is the effect of the high alert on the rest of the police district areas within DC. The third coefficient is the log of midday metro ridership. Basically this regression is showing that the high alert (and therefore an increased number of police) lowers crime mostly in the National Mall area, the effect in the rest of the city isn't as profound as it is in the other area, even though it still lowers crime by a small amount. However, the regression still shows strong evidence that more police lowers crime, this is because during a high alert the DC police force is probably going to increase police the most in district one. 
+
+## Problem 2 Tree Modeling: Dengue Cases
+### Part 1: CART
+
+```{r 2, message=FALSE, echo=FALSE}
+#fixing na values 
+dengue <- na.exclude(dengue)
+dengue$city = dengue$city %>% factor()
+dengue$season = dengue$season %>% factor()
+#create a testing and training set
+dengue_split = initial_split(dengue, prop = 0.9)
+dengue_train = training(dengue_split)
+dengue_test = testing(dengue_split)
+#creating the tree, CART model
+dengue_tree = rpart(total_cases ~ ., data = dengue_train,
+                    control = rpart.control(cp = 0.002, minsplit=30))
+rpart.plot(dengue_tree, digits=-5, type=4, extra=1)
+```
+
+The model above shows the un-pruned CART Tree, we will proceed to prune and then calculate RMSE.
+
+
+``` {r 2 cont , message=FALSE, echo=FALSE}
+# this function actually prunes the tree at that level
+prune_1se = function(my_tree) {
+  out = as.data.frame(my_tree$cptable)
+  thresh = min(out$xerror + out$xstd)
+  cp_opt = max(out$CP[out$xerror <= thresh])
+  prune(my_tree, cp=cp_opt)
+}
+#lets prune to make sure we have the best model
+prune_dengue_tree = prune_1se(dengue_tree)
+#checking
+rmse_CART = rmse(prune_dengue_tree, dengue_test)
+cat(rmse_CART,' RMSE for Pruned CART Model') 
+```
+
+### Part 2: Random Forest
+``` {r 2 cont again , message=FALSE, echo=FALSE}
+#random forest
+DengueRandom = randomForest(total_cases ~ ., data= dengue_train, importance = TRUE)
+plot(DengueRandom)
+```
+
+This plot shows the out of bag MSE as a function of the number of trees used. Let's proceed to look at the RMSE compared to the testing set.
+
+
+``` {r 2 random conclusion, message=FALSE, echo=FALSE}
+rmse_random = rmse(DengueRandom, dengue_test)
+cat(rmse_random,' RMSE for Random Forest')
+```
+
+### Part 3: Gradient Boosted Trees
+
+``` {r 2 boosted , message=FALSE, echo=FALSE}
+#boosted trees
+DengueBoost = gbm(total_cases ~ ., data= dengue_train,
+             interaction.depth=4, n.trees=350, shrinkage=.05, cv.folds = 10, 
+             distribution='gaussian')
+gbm.perf(DengueBoost)
+```
+
+This plot shows the error curve of the Gradient Boosted Model, with the optimal number of trees listed as output. Let's now check the RMSE for the Gradient Boosted Trees Model. 
+
+
+``` {r 2 boosted conclusion, message=FALSE, echo=FALSE}
+#checking
+rmse_boosted = rmse(DengueBoost, dengue_test) 
+cat(rmse_boosted,' RMSE for Gradient Boosted Trees') 
+```
+
+Looking at the RMSE results from the three models, it appears that random forest would be the best choice for this particular set of data. The next section shows the partial dependency plots for the Random Forest Model. 
+
+### Part 4: Partial Dependency Plots
+``` {r 2 PD plots, message=FALSE, echo=FALSE}
+#pd plots
+partialPlot(DengueRandom, dengue_test, 'specific_humidity', las=1)
+partialPlot(DengueRandom, dengue_test, 'precipitation_amt', las=1)
+partialPlot(DengueRandom, dengue_test, 'tdtr_k', las=1)
+```
+
+### Wrap Up: 
+
+Looking at the PD plots, most seem to make sense in the context of the science of mosquito breeding. Mosquitos require standing water in order to make baby mosquitos, it makes sense that as precipitation increases, the number of mosquitos increases, the increased number of mosquitos leads to more cases of Dengue. The same seems to be true of humidity. Humidity is a measure of how much evaporated moisture there is in the air, higher humidity would seem to indicate that there is a higher amount of water on the ground, and thus the amount of mosquito breeding grounds. Our wild card PD plot looks at the Average Diurnal Temperature Range. It shows that as DTR increases, the amount of predicted Dengue cases decreases. This makes sense as well, it's possible that temperature shocks kill mosquitos which leads to less Dengue cases. 
+
+# Problem 3 - Predictive model building: green certification
+
+### intro
+
+The objective of this inquiry is to measure the impact of green certifications on revenue per square foot in buildings that have received such certifications. While it is evident that green certifications have a positive environmental effect, it remains uncertain whether they enhance a building's appeal to prospective renters and if people take note of a building's green certification status.
+
+To tackle this problem, our objective is to identify the optimal model for predicting rental revenue using the given variables. Our approach involves manipulating the data across various models and subsequently evaluating their performance to determine the most suitable option. We decided to use 5 models, including 1 regression model, and 4 tree models to perform the prediction. Once we have completed all the things, we will compare the rmse it generated and use some other analysis to help us make the final decision.
+
+### data
+Our dataset comprises 7,894 commercial rental properties located throughout the United States. Among them, 685 properties have received LEED or EnergyStar certification for being environmentally friendly buildings. In addition to this, the dataset includes several other variables that identify different aspects of the properties, including property ID, age, rent and annual precipitation levels in inches in the specific geographic location of the building. 
+
+The first thing we need to do is to clean the data by removing the non-exsiting data and create the variable "Revenue" that we want to use.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+library(tidyverse)
+library(mosaic)
+library(dplyr)
+library(data.table)
+library(rsample)
+library(modelr)
+library(ggplot2)
+library(rpart)
+library(ipred)
+library(caret)
+library(randomForest)
+library(gbm)
+library(pdp)
+
+greenbuildings <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/greenbuildings.csv")
+greenbuildings = na.omit(greenbuildings)
+greenbuildings = greenbuildings %>% 
+  mutate(revenue = Rent * (leasing_rate/100))
+```
+
+
+### Then we separate the data into testing group and training group in order to do the prediction better.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+gb_split =  initial_split(greenbuildings, prop=0.8)
+gb_train = training(gb_split)
+gb_test  = testing(gb_split)
+```
+
+###model
+
+We tried five different models to see which one will yield the best out-of-sample RMSE, they are stepwise selction,Classification and Regression Trees, bagging method, random forest, and boosting method model. We choose these modesl because the stepwise selection regression identify useful predictors during the exploratory stages of model building for linear regression. In addition, We are not sure which forest model is best at prediction, so we tried all four tree models introduced in class. 
+
+We use the variables： size + empl_gr + stories + age + renovated + class_a + class_b + green_rating + amenities + total_dd_07 + Precipitation +  Gas_Costs + Electricity_Costs + City_Market_Rent.We selected these specific variables as we believe they are pertinent to the dependent variable, and are not either irrelevant (such as the property ID) or serially correlated with the dependent variables (such as rent with revenue). Additionally, we excluded variables that may have linear relationships with other exogenous variables.
+
+We split the data set into training and testing sets, and we trained all of the three models on training data using all of the variables.
+
+
+### We choose to use the stepwise method to perform the regression model
+### model1: stepwise selection
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+lm_basic = lm(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                Gas_Costs + Electricity_Costs + City_Market_Rent, data = gb_train)
+lm_step = step(lm_basic, trace = 0)
+
+getCall(lm_step)
+coef(lm_step)
+rmse(lm_step, gb_test)
+summary(lm_step)
+plot(lm_step)
+```
+
+
+### Then is about the four tree models we learnt from the class
+### Model2: Classification and Regression Trees
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+set.seed(1)
+Tree1 = rpart(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                Gas_Costs + Electricity_Costs + City_Market_Rent, data = gb_train)
+yhat_test_Tree1 = predict(Tree1, newdata = gb_test)
+summary(Tree1)
+# Comparison between Predicted Revenue under the Classification and Regression Trees model and Actual Income")
+plot(yhat_test_Tree1, gb_test$revenue, xlab = "Predicted Revenue - Tree1", 
+     ylab = 'Revenue')
+```
+
+
+### model3: bagging method
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+set.seed(1)
+Tree2 = bagging(formula = revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                  class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                  Gas_Costs + Electricity_Costs + City_Market_Rent, data = gb_train, 
+                nbagg=150,coob=T,control = rpart.control(minsplit = 2, cp = 0))
+yhat_test_Tree2 = predict(Tree2, newdata=gb_test)
+summary(Tree2)
+# Comparison between Predicted Revenue under Bagging model and Actual Income"
+plot(yhat_test_Tree2, gb_test$revenue, xlab = "Predicted Revenue - Tree2", 
+     ylab = "Revenue")
+```
+
+
+### model4: random forests method
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+set.seed(1)
+Tree3 = randomForest(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                       class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                       Gas_Costs + Electricity_Costs + City_Market_Rent, data = gb_train, importance=TRUE)
+yhat_test_Tree3 = predict(Tree3, newdata=gb_test)
+summary(Tree3)
+# Comparison between Predicted Revenue under Random Forests model and Actual Income")
+plot(yhat_test_Tree3, gb_test$revenue, xlab = "Predicted Revenue - Tree3", 
+     ylab = "Revenue")
+```
+
+### model5: boosting method
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+set.seed(1)
+Tree4 = gbm(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+              class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+              Gas_Costs + Electricity_Costs + City_Market_Rent, data = gb_train, 
+            interaction.depth=4, n.trees=500, shrinkage=.05)
+yhat_test_Tree4 = predict(Tree4, newdata=gb_test)
+summary(Tree4)
+# Comparison between Predicted Revenue under Boosting model and Actual Income")
+plot(yhat_test_Tree4, gb_test$revenue, xlab = "Predicted Revenue - Tree4", 
+     ylab = "Revenue")
+```
+
+
+### After finishing all the prediction, we can now compare the result they generated. In this situation,we choose to compare the rsme.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+rmse(lm_step, gb_test)
+rmse(Tree1, gb_test)
+rmse(Tree2, gb_test)
+rmse(Tree3, gb_test)
+rmse(Tree4, gb_test)
+```
+
+### From the result we know that Tree2 and Tree3 generate the smallest. Therefore, bagging and random forest may be the best model.
+
+### Now lets using k-fold cross-validation standard error to make the final choice confirming the best model.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+set.seed(1)
+train.control <- trainControl(method = "cv",number=10)
+Forest = train(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                       class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                       Gas_Costs + Electricity_Costs + City_Market_Rent, data = greenbuildings, 
+                     method = "rf",
+                     trControl = train.control)
+Forest
+Bagging = train(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                 class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                 Gas_Costs + Electricity_Costs + City_Market_Rent, data = greenbuildings, 
+               method = "treebag",
+               trControl = train.control)
+Bagging
+```
+
+### From the results shown above, we got to know that the least RMSE lies when mtry = 8 and using the random forest model. In this way, we can create the best prediction model:
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+Bestmodel= randomForest(revenue ~ size + empl_gr + stories + age + renovated + class_a + 
+                          class_b + green_rating + amenities + total_dd_07 + Precipitation + 
+                          Gas_Costs + Electricity_Costs + City_Market_Rent, data = greenbuildings, 
+                        mtry=8,importance=TRUE)
+Bestmodel
+
+varImpPlot(Bestmodel, type=1)
+```
+
+### Then we create a plot using greenrating vairable and revenue to get an idea of the partial influences between the two.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+partialPlot(Bestmodel, greenbuildings, 'green_rating', 
+            xlab="Green Rating", 
+            ylab="predicted revenue")
+```
+
+### From the picture, we know that the the average change in rental income per square foot associated with green certification, holding other features of the building constant is 0.5.
+
+
+### Conclusion:
+### Among the five models we used to do the prediction, the best model we can choose is the Random Forest prediction model.Also, the partial influence we get above tells us that green certification has a positive influence on the rental revenue.
+
+
+
+
+###Problem 4
+```{r setup, include=FALSE}
+library(tidyverse)
+library(mosaic)
+library(dplyr)
+library(data.table)
+library(rsample)
+library(modelr)
+library(ggplot2)
+library(rpart)
+library(ipred)
+library(caret)
+library(randomForest)
+library(gbm)
+library(pdp)
+library(ggmap)
+
+CAhousing <- read.csv("/Users/yuzhuliu/Desktop/Data Mining/PS3/CAhousing.csv")
+# split data into training and testing:  
+CA_split =  initial_split(CAhousing, prop=0.8)
+CA_train = training(CA_split)
+CA_test  = testing(CA_split)
+
+```
+
+# 3 modles will be created and then we will compare and select the best model:
+
+## Model 1: CART: classification and regression trees
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+CA_tree = rpart(medianHouseValue ~ . , data=CA_train, control = rpart.control(cp = 0.00001))
+
+```
+## Model 2: Random forests method
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+CA_forest = randomForest(medianHouseValue ~ . , data=CA_train, control = rpart.control(cp = 0.00001), importance=TRUE)
+
+```
+## Model 3:Boosting method
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+
+CA_boost = gbm(medianHouseValue ~., 
+               data = CA_train,
+               distribution = "gaussian",
+               interaction.depth=4, n.trees=5000, shrinkage=.05)
+```
+## Model 4: Bagging method
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+CA_bagging = bagging(formula = medianHouseValue ~., 
+                data = CA_train, 
+                nbagg=150,coob=T,control = rpart.control(minsplit = 2, cp = 0))
+```
+
+
+## Calculate RMSE
+According to the RMSE, Model 3: Boosting method has the lowest RMSE, so it is regarded as the best model. 
+
+RMSE CART=58017
+RMSE Random Forest=51416
+RMSE boosting=47609
+RMSE bagging=49282
+
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+rmse_CA_tree = rmse(CA_tree, CA_test)
+rmse_CA_forest = rmse(CA_forest, CA_test)
+rmse_CA_boost = rmse(CA_boost, CA_test)
+rmse_CA_bagging = rmse(CA_bagging, CA_test)
+```
+
+## (1) Plot1: Original data
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+qmplot(longitude, latitude, data = 
+         CAhousing, color = medianHouseValue, 
+       size = I(2), darken = .2) +
+  ggtitle("Actual Median House Value in California") + 
+  xlab("Longitude") + ylab("Latitude") +
+  scale_colour_gradient(low = "dark blue", high = "yellow")+
+  labs(color = "Median House Value")
+
+```
+
+## (2) Plot2: Predicted data
+
+We used boosting method to predict data.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+CA_Pred = predict(CA_boost, CAhousing)
+
+qmplot(longitude, latitude, data = CAhousing, 
+       color = CA_Pred, size = I(2), darken = .2) +
+  xlab("Longitude") +ylab("Latitude") +
+  ggtitle("Predicted Median House Value in California") +
+    scale_colour_gradient(low = "dark blue", high ="yellow")+
+  labs(color = "Predicted Median House Value")
+
+```
+
+## (3) Plot3: Residuals data
+
+As we can see, by using the boosting method, most of the residuals are very small.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+CAhousing<-CAhousing%>%
+  mutate(residuals= abs(CAhousing$medianHouseValue - CA_Pred))
+
+qmplot(longitude, latitude, data = CAhousing, color =residuals, size = I(2), darken = .2) +
+  xlab("Longitude") + ylab("Latitude") +
+  ggtitle("Residuals of California Median House Value") +
+ scale_colour_gradient(low = "dark blue", high = "yellow")+  labs(color = "Residuals")
+
+```
